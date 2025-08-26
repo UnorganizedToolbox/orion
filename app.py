@@ -21,8 +21,19 @@ if "session_started" not in st.session_state:
 if not st.session_state.session_started:
     st.subheader("Mission Setup")
     start_point = st.text_input("📍 Starting Point", "JR大阪駅")
-    duration = st.number_input("⏳ Duration (minutes)", min_value=15, max_value=240, value=60)
-    scope = st.slider("🌐 Scope (radius in km)", min_value=0.5, max_value=5.0, value=1.5, step=0.5)
+    duration = st.number_input(
+    "⏳ Duration (minutes)", 
+    min_value=15,       # 最小15分
+    max_value=1440,     # 最大1440分 (24時間)
+    value=60
+    )
+    scope = st.slider(
+    "🌐 Scope (radius in km)", 
+    min_value=0.1,      # 最小100m
+    max_value=20.0,     # 最大20km
+    value=1.5, 
+    step=0.1
+    )
 
     if st.button("🚀 Start Exploration"):
         with st.spinner("Orion is calibrating its sensors... Acknowledging mission parameters..."):

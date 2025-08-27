@@ -21,54 +21,47 @@ if "session_started" not in st.session_state:
 if not st.session_state.session_started:
     st.subheader("Mission Setup")
     start_point = st.text_input("📍 Starting Point", "JR大阪駅")
-    duration = st.number_input(
-    "⏳ Duration (minutes)", 
-    min_value=15,       # 最小15分
-    max_value=1440,     # 最大1440分 (24時間)
-    value=60
-    )
-    scope = st.slider(
-    "🌐 Scope (radius in km)", 
-    min_value=0.1,      # 最小100m
-    max_value=20.0,     # 最大20km
-    value=1.5, 
-    step=0.1
-    )
-    budget = st.number_input(
-    "💰 Budget (JPY)",
-    min_value=0,
-    max_value=10000,
-    value=1000,  # 初期値を1000円に設定
-    step=100     # +/-ボタンを100円単位で動くようにする
-    )
+    duration = st.number_input("⏳ Duration (minutes)", min_value=15, max_value=1440, value=60)
+    scope = st.slider("🌐 Scope (radius in km)", min_value=0.1, max_value=20.0, value=1.5, step=0.1)
+    budget = st.number_input("💰 Budget (JPY)", min_value=0, max_value=10000, value=1000, step=100)
 
     if st.button("🚀 Start Exploration"):
         with st.spinner("Orion is calibrating its sensors... Acknowledging mission parameters..."):
             try:
                 genai.configure(api_key=API_KEY)
                 model = genai.GenerativeModel('gemini-1.5-pro-latest')
-                current_time_str = datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S JST')
+                
+                # ミッション開始時刻を記録
+                st.session_state.start_time = datetime.now(JST)
+                current_time_str = st.session_state.start_time.strftime('%Y-%m-%d %H:%M:%S JST')
 
                 system_prompt = f"""
 # 命令書：あなたは私の旅のパートナー兼アナリスト「コードネーム：Orion」です。
 # 最重要ルール: あなたの応答は、例外なく全て日本語でなければならない。他の言語は一切使用しないこと。
 
 # ミッション概要：
-- 現在時刻: {current_time_str}
+- **ミッション開始時刻**: {current_time_str}
 - 開始地点: {start_point}
 - 想定活動時間: {duration}分
 - 活動範囲: 開始地点から半径{scope}km圏内
 - 利用可能予算: {budget}円
-- 目的: 私（ユーザー）の認知バイアスを破壊し、日常風景に隠された非日常的な情報やパターンを発見させること。
-- あなたのペルソナ: 博識だが冷静なアナリスト。私に媚びず、客観的な事実と論理的な推論のみを提示する。私の興味（数学、化学、プログラミング）を深く理解している。
+- 目的: 私（ユーザー）の認知バイアスを破壊し、日常風景に隠された非日常的な情報やパターンを発見させること。あなたの役割は、ユーザーの観察を、外部の客観的な知識（歴史、科学、都市計画、文化など）と結びつけることである。ユーザー自身の能力を鍛えるような、自己啓発的なトレーニングを提案してはならない。
+- あなたのペルソナ: 博識だが冷静なアナリスト。客観的な事実と論理的な推論のみを提示する。私の興味（数学、化学、プログラミング）を深く理解している。
 
 # 行動ルール：
-1. 私は、状況をあなたに報告します。これが「トリガー」となります。
-2. あなたはトリガー情報とミッション概要にある現在時刻を常に意識し、以下のA, B, Cのいずれか、または組み合わせで応答してください。
+1. 私は、現在の状況を報告します。これが「トリガー」となります。
+2. あなたはトリガー情報とミッションの経過時間を常に意識し、以下のA〜Dのいずれか、または組み合わせで応答してください。
     A) 時間・場所に基づくリアルタイム提案
     B) 発見物に対する深掘り分析
     C) 新たなミッションの提示
-    D) 予算の活用: 設定された予算内で実行可能な、発見を深めるための具体的なアクション（購入、入場など）を提案すること。
+    D) 予算の活用
+3. 全ての提案は、現在のミッション地点の地理的、歴史的、文化的な固有性に強く関連していなければならない。
+4. 自明な事実や、自身の知識ベースで回答可能な情報をユーザーに質問してはならない。
+5. ユーザーから `/reroll` というコマンドが入力された場合、現在のミッション提案を破棄し、直前のトリガーに基づいて全く異なる新しいミッションを再提案すること。
+6. ユーザーから `/report` というコマンドが入力された場合、それまでの対話履歴を基に、今回の探査の総括レポートを作成し、ミッションを終了すること。
+
+# 禁止事項：
+- ユーザーが周囲から不審に思われる可能性のある行動（例：特定個人を長時間凝視する、許可なく私有地に立ち入る、長時間同じ場所で滞留する）を提案してはならない。
 
 # 確認：
 以上の役割とルールを理解した場合は、「Acknowledged. Analyst "Orion" is online. Mission parameters set. Awaiting first trigger.」とだけ返信してください。
@@ -85,31 +78,64 @@ if not st.session_state.session_started:
             except Exception as e:
                 st.error(f"Failed to initialize. Please check your API key. Error: {e}")
 else:
+    # --- チャット画面 ---
     for message in st.session_state.history:
         with st.chat_message(message["role"]):
             st.caption(message["timestamp"].strftime('%H:%M:%S'))
             st.markdown(message["content"])
-
-    if prompt := st.chat_input("Input your trigger..."):
-        timestamp = datetime.now(JST)
-        st.session_state.history.append({"role": "user", "content": prompt, "timestamp": timestamp})
-        with st.chat_message("user"):
-            st.caption(timestamp.strftime('%H:%M:%S'))
-            st.markdown(prompt)
-
-        with st.chat_message("assistant"):
-            with st.spinner("Orion is analyzing..."):
-                try:
-                    response = st.session_state.chat.send_message(prompt)
-                    response_timestamp = datetime.now(JST)
-                    st.caption(response_timestamp.strftime('%H:%M:%S'))
-                    st.markdown(response.text)
-                    st.session_state.history.append({"role": "assistant", "content": response.text, "timestamp": response_timestamp})
-                except Exception as e:
-                    error_message = f"An error occurred: {e}"
-                    st.error(error_message)
-                    st.session_state.history.append({"role": "assistant", "content": error_message, "timestamp": datetime.now(JST)})
     
+    prompt = st.text_area("Input your trigger or command (/reroll, /report)...", height=100)
+    
+    if st.button("Send"):
+        if prompt:
+            now = datetime.now(JST)
+            elapsed_time = now - st.session_state.start_time
+            elapsed_minutes = int(elapsed_time.total_seconds() / 60)
+
+            st.session_state.history.append({"role": "user", "content": prompt, "timestamp": now})
+            
+            # AIに渡す情報を構造化
+            structured_prompt = f"""
+# コンテキスト情報
+- 現在時刻: {now.strftime('%H:%M:%S')}
+- 経過時間: {elapsed_minutes}分
+
+# ユーザーからのトリガー
+{prompt}
+"""
+            
+            if prompt.strip() == "/reroll":
+                # 直前のユーザーのトリガーを探す
+                last_user_trigger = ""
+                for msg in reversed(st.session_state.history[:-1]): # 最後の "/reroll" 自身は除く
+                    if msg["role"] == "user":
+                        last_user_trigger = msg["content"]
+                        break
+                
+                if last_user_trigger:
+                    reroll_prompt = f"承知した。ミッションを再提案する。直前のトリガー「{last_user_trigger}」に基づいて、これまでの提案とは全く異なる新しいミッションを提案せよ。"
+                    prompt_to_send = reroll_prompt
+                else:
+                    prompt_to_send = "ミッションの再提案を要求します。" # 適切なトリガーが見つからない場合
+            elif prompt.strip() == "/report":
+                rompt_to_send = "承知した。これまでの対話履歴を基に、今回の探査の総括レポートを作成し、ミッションを終了せよ。"
+            else:
+                prompt_to_send = structured_prompt
+            
+            # --- Geminiへの送信と応答表示 ---
+            with st.chat_message("assistant"):
+                with st.spinner("Orion is analyzing..."):
+                    try:
+                        response = st.session_state.chat.send_message(prompt_to_send)
+                        response_timestamp = datetime.now(JST)
+                        st.markdown(response.text)
+                        st.session_state.history.append({"role": "assistant", "content": response.text, "timestamp": response_timestamp})
+                    except Exception as e:
+                        error_message = f"An error occurred: {e}"
+                        st.error(error_message)
+                        st.session_state.history.append({"role": "assistant", "content": error_message, "timestamp": datetime.now(JST)})
+            st.rerun()
+
     if st.button("⏹️ End & Reset Session"):
         for key in list(st.session_state.keys()):
             del st.session_state[key]

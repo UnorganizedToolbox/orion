@@ -4,21 +4,80 @@ import os
 from dotenv import load_dotenv
 from datetime import datetime
 import pytz
+import json
 
 # --- 初期設定 ---
 load_dotenv()
 API_KEY = os.getenv("GEMINI_API_KEY")
 JST = pytz.timezone('Asia/Tokyo')
+SESSION_FILE = "orion_session.json" # セッション保存用のファイル名
 
+# --- セッション管理機能 ---
+def save_session_state():
+    """現在のセッション情報（履歴など）をJSONファイルに保存する"""
+    if 'session_started' in st.session_state and st.session_state.session_started:
+        # datetimeオブジェクトを文字列（ISO形式）に変換して保存
+        history_to_save = [
+            {**msg, 'timestamp': msg['timestamp'].isoformat()} for msg in st.session_state.history
+        ]
+        data_to_save = {
+            'start_time': st.session_state.start_time.isoformat(),
+            'history': history_to_save,
+            'session_started': st.session_state.session_started
+        }
+        with open(SESSION_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data_to_save, f, ensure_ascii=False, indent=4)
+
+def load_session_state():
+    """JSONファイルからセッション情報を読み込んで復元する"""
+    if os.path.exists(SESSION_FILE):
+        try:
+            with open(SESSION_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            st.session_state.session_started = data.get('session_started', False)
+            if not st.session_state.session_started:
+                return
+
+            st.session_state.start_time = datetime.fromisoformat(data['start_time'])
+            
+            # 履歴のタイムスタンプをdatetimeオブジェクトに戻す
+            loaded_history = data['history']
+            for message in loaded_history:
+                message['timestamp'] = datetime.fromisoformat(message['timestamp'])
+            st.session_state.history = loaded_history
+
+            # Geminiモデルとチャットセッションを履歴と共に再初期化
+            genai.configure(api_key=API_KEY)
+            model = genai.GenerativeModel('gemini-1.5-pro-latest')
+            
+            # --- 修正点 1 (最重要): 正しい履歴フォーマットでチャットを再開 ---
+            # APIが要求する形式 {'role': 'user'/'model', 'parts': [content]} に変換する
+            model_history = []
+            for msg in st.session_state.history:
+                role = "model" if msg["role"] == "assistant" else "user"
+                model_history.append({'role': role, 'parts': [msg['content']]})
+            
+            st.session_state.chat = model.start_chat(history=model_history)
+
+        except (json.JSONDecodeError, KeyError) as e:
+            st.error(f"セッションファイルの読み込みに失敗しました。新しいセッションを開始します。エラー: {e}")
+            st.session_state.session_started = False
+            if os.path.exists(SESSION_FILE):
+                os.remove(SESSION_FILE)
+
+
+# --- アプリのメイン処理 ---
 st.set_page_config(page_title="Orion Project", page_icon="🔭")
 st.title("🔭 Orion: The Urban Explorer's Analyst")
 
-# --- セッション管理 ---
-if "session_started" not in st.session_state:
-    st.session_state.session_started = False
+# アプリ起動時に一度だけセッションを読み込む
+if "session_loaded" not in st.session_state:
+    load_session_state()
+    st.session_state.session_loaded = True
 
-# --- メインロジック ---
-if not st.session_state.session_started:
+# セッションが開始されていない場合、設定画面を表示
+if not st.session_state.get("session_started", False):
     st.subheader("Mission Setup")
     start_point = st.text_input("📍 Starting Point", "JR大阪駅")
     duration = st.number_input("⏳ Duration (minutes)", min_value=15, max_value=1440, value=60)
@@ -31,7 +90,6 @@ if not st.session_state.session_started:
                 genai.configure(api_key=API_KEY)
                 model = genai.GenerativeModel('gemini-1.5-pro-latest')
                 
-                # ミッション開始時刻を記録
                 st.session_state.start_time = datetime.now(JST)
                 current_time_str = st.session_state.start_time.strftime('%Y-%m-%d %H:%M:%S JST')
 
@@ -73,17 +131,21 @@ if not st.session_state.session_started:
                     {"role": "assistant", "content": initial_response.text, "timestamp": datetime.now(JST)}
                 ]
                 st.session_state.session_started = True
+                
+                # --- 修正点 2: 成功した場合にのみセッションを保存 ---
+                save_session_state()
                 st.rerun()
 
             except Exception as e:
                 st.error(f"Failed to initialize. Please check your API key. Error: {e}")
+
+# セッションが開始された場合、チャット画面を表示
 else:
-    # --- チャット画面 ---
     for message in st.session_state.history:
         with st.chat_message(message["role"]):
             st.caption(message["timestamp"].strftime('%H:%M:%S'))
             st.markdown(message["content"])
-    
+
     prompt = st.text_area("Input your trigger or command (/reroll, /report)...", height=100)
     
     if st.button("Send"):
@@ -94,7 +156,6 @@ else:
 
             st.session_state.history.append({"role": "user", "content": prompt, "timestamp": now})
             
-            # AIに渡す情報を構造化
             structured_prompt = f"""
 # コンテキスト情報
 - 現在時刻: {now.strftime('%H:%M:%S')}
@@ -105,24 +166,24 @@ else:
 """
             
             if prompt.strip() == "/reroll":
-                # 直前のユーザーのトリガーを探す
                 last_user_trigger = ""
-                for msg in reversed(st.session_state.history[:-1]): # 最後の "/reroll" 自身は除く
+                for msg in reversed(st.session_state.history[:-1]):
                     if msg["role"] == "user":
                         last_user_trigger = msg["content"]
                         break
-                
                 if last_user_trigger:
                     reroll_prompt = f"承知した。ミッションを再提案する。直前のトリガー「{last_user_trigger}」に基づいて、これまでの提案とは全く異なる新しいミッションを提案せよ。"
                     prompt_to_send = reroll_prompt
                 else:
-                    prompt_to_send = "ミッションの再提案を要求します。" # 適切なトリガーが見つからない場合
+                    prompt_to_send = "ミッションの再提案を要求します。"
+            
             elif prompt.strip() == "/report":
-                rompt_to_send = "承知した。これまでの対話履歴を基に、今回の探査の総括レポートを作成し、ミッションを終了せよ。"
+                # --- 修正点 3: 'rompt'のタイポを修正 ---
+                prompt_to_send = "承知した。これまでの対話履歴を基に、今回の探査の総括レポートを作成し、ミッションを終了せよ。"
+            
             else:
                 prompt_to_send = structured_prompt
             
-            # --- Geminiへの送信と応答表示 ---
             with st.chat_message("assistant"):
                 with st.spinner("Orion is analyzing..."):
                     try:
@@ -134,9 +195,13 @@ else:
                         error_message = f"An error occurred: {e}"
                         st.error(error_message)
                         st.session_state.history.append({"role": "assistant", "content": error_message, "timestamp": datetime.now(JST)})
+            
+            save_session_state()
             st.rerun()
 
     if st.button("⏹️ End & Reset Session"):
+        if os.path.exists(SESSION_FILE):
+            os.remove(SESSION_FILE)
         for key in list(st.session_state.keys()):
             del st.session_state[key]
         st.rerun()

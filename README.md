@@ -7,5 +7,8 @@
 1. Fork
 2. Use Streamlit
 
+## License
+MIT Licence
+
 ## Release Note:
 1.0 Reelase
